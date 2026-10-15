@@ -1,0 +1,11 @@
+# Cloudflare Workers deploy config.
+# Deploy: npx wrangler deploy
+# Secrets (set via dashboard or `wrangler secret put`):
+#   RUNNER_API_KEY  - API key required by callers (optional; open if unset)
+#   KAGGLE_KEY      - "username:apikey" from kaggle.com -> Settings -> API
+name = "kaggle-colab-runner"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+[vars]
+# KAGGLE_KEY and RUNNER_API_KEY are set as secrets, not here.
