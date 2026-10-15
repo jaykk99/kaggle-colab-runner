@@ -15,6 +15,20 @@ export interface KaggleCreds {
   apiKey: string;
 }
 
+/** Base64 decode (ASCII-safe). Works in Workers (atob) and Node (Buffer). */
+function b64decode(s: string): string {
+  try {
+    if (typeof atob === "function") return atob(s);
+  } catch { /* fall through */ }
+  return Buffer.from(s, "base64").toString("utf8");
+}
+
+/** Base64 encode (ASCII-safe). Works in Workers (btoa) and Node (Buffer). */
+function b64encode(s: string): string {
+  if (typeof btoa === "function") return btoa(s);
+  return Buffer.from(s, "utf8").toString("base64");
+}
+
 /** Parse "username:apikey" (raw or base64) into creds. */
 export function parseKaggleKey(raw: string): KaggleCreds | null {
   const s = (raw || "").trim();
@@ -23,7 +37,7 @@ export function parseKaggleKey(raw: string): KaggleCreds | null {
   // If it looks like base64 "user:key", decode it.
   if (/^[A-Za-z0-9+/=]+$/.test(s) && !s.includes(":")) {
     try {
-      const d = Buffer.from(s, "base64").toString("utf8");
+      const d = b64decode(s);
       if (d.includes(":")) decoded = d;
     } catch {
       /* not base64, use raw */
@@ -38,7 +52,7 @@ export function parseKaggleKey(raw: string): KaggleCreds | null {
 }
 
 function authHeader(c: KaggleCreds): string {
-  return "Basic " + Buffer.from(`${c.username}:${c.apiKey}`).toString("base64");
+  return "Basic " + b64encode(`${c.username}:${c.apiKey}`);
 }
 
 async function call<T>(

@@ -29,10 +29,13 @@ const app = new Hono<{ Bindings: Env }>();
 
 function envOf(c: { env: Env }): Env {
   // Works on Workers (c.env), Node (process.env), and Vercel.
+  // Guard process: it does not exist in the Workers runtime.
   const e = (c.env || {}) as Env;
+  const penv =
+    typeof process !== "undefined" && process.env ? process.env : ({} as Record<string, string | undefined>);
   return {
-    RUNNER_API_KEY: e.RUNNER_API_KEY || process.env.RUNNER_API_KEY,
-    KAGGLE_KEY: e.KAGGLE_KEY || process.env.KAGGLE_KEY,
+    RUNNER_API_KEY: e.RUNNER_API_KEY || penv.RUNNER_API_KEY,
+    KAGGLE_KEY: e.KAGGLE_KEY || penv.KAGGLE_KEY,
   };
 }
 
