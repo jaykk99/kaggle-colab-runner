@@ -17,7 +17,7 @@ import {
   saveKernel,
 } from "./kaggle.js";
 import { runCpu } from "./wandbox.js";
-import { workerNotebook, type WorkerType } from "./notebook.js";
+import { workerNotebook, workerScript, type WorkerType } from "./notebook.js";
 import { handleMcp } from "./mcp.js";
 
 type Env = {
@@ -185,6 +185,22 @@ app.get("/api/worker-notebook", async (c) => {
     type: t,
     hint: "save as .ipynb, open in Colab, Run-all, leave the tab open",
     notebook: nb,
+  });
+});
+
+// ---- pull-worker as plain python ----
+// GET /api/worker-script?type=train|asset&supabase_url=..&supabase_key=..
+
+app.get("/api/worker-script", async (c) => {
+  const t = c.req.query("type") || "";
+  if (t !== "train" && t !== "asset")
+    return c.json({ ok: false, error: "type must be 'train' or 'asset'" }, 400);
+  const script = workerScript(t as WorkerType, {
+    supabaseUrl: c.req.query("supabase_url") || undefined,
+    supabaseKey: c.req.query("supabase_key") || undefined,
+  });
+  return new Response(script, {
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
   });
 });
 

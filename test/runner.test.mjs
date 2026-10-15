@@ -119,6 +119,14 @@ describe("worker notebook generator", () => {
     const { status } = await get("/api/worker-notebook?type=nope");
     assert.equal(status, 400);
   });
+  it("worker-script returns plain python", async () => {
+    const r = await app.request("/api/worker-script?type=asset");
+    assert.equal(r.status, 200);
+    const text = await r.text();
+    assert.match(text, /TABLE = "forge_asset_jobs"/);
+    assert.match(text, /claim_job/);
+    assert.match(text, /wipe\(work\)/);
+  });
 });
 
 describe("cancel honesty", () => {
@@ -138,9 +146,9 @@ describe("MCP", () => {
     const j = await rpc("initialize", {});
     assert.equal(j.result.serverInfo.name, "kaggle-colab-runner");
   });
-  it("tools/list has 5 tools", async () => {
+  it("tools/list has 6 tools", async () => {
     const j = await rpc("tools/list", {});
-    assert.equal(j.result.tools.length, 5);
+    assert.equal(j.result.tools.length, 6);
   });
   it("tools/call runner_worker_notebook", async () => {
     const j = await rpc("tools/call", { name: "runner_worker_notebook", arguments: { type: "train" } });

@@ -17,7 +17,7 @@ import {
   type KaggleCreds,
 } from "./kaggle.js";
 import { runCpu } from "./wandbox.js";
-import { workerNotebook, type WorkerType } from "./notebook.js";
+import { workerNotebook, workerScript, type WorkerType } from "./notebook.js";
 
 export interface RunnerEnv {
   KAGGLE_KEY?: string;
@@ -71,6 +71,22 @@ const TOOLS: ToolDef[] = [
     name: "runner_kaggle_quota",
     description: "Check free Kaggle GPU accelerator quota remaining.",
     inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "runner_worker_script",
+    description:
+      "Get a pull-worker as plain Python (for pushing to Kaggle via " +
+      "runner_run_code, or saving as .py). Same workers as " +
+      "runner_worker_notebook: 'train' or 'asset'.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string", enum: ["train", "asset"] },
+        supabase_url: { type: "string" },
+        supabase_key: { type: "string" },
+      },
+      required: ["type"],
+    },
   },
   {
     name: "runner_worker_notebook",
@@ -156,6 +172,19 @@ async function callTool(
       const r = await acceleratorQuota(creds);
       if (!r.ok) return toolError(`quota failed (HTTP ${r.status}): ${r.error}`);
       return textResult({ ok: true, quota: r.quota });
+    }
+    case "runner_worker_script": {
+      const t = String(args.type || "");
+      if (t !== "train" && t !== "asset")
+        return toolError("type must be 'train' or 'asset'");
+      return textResult({
+        ok: true,
+        type: t,
+        script: workerScript(t as WorkerType, {
+          supabaseUrl: String(args.supabase_url || "") || undefined,
+          supabaseKey: String(args.supabase_key || "") || undefined,
+        }),
+      });
     }
     case "runner_worker_notebook": {
       const t = String(args.type || "");
