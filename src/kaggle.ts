@@ -176,7 +176,7 @@ export async function saveKernel(
     categoryIds: [],
   };
   const r = await call<{ ref?: string }>(creds, "SaveKernel", payload);
-  if (!r.ok) return { ok: false as const, status: r.status, error: errOf(r.data), ref: "" };
+  if (!r.ok) return { ok: false as const, status: r.status, error: errOf(r.data, r.status), ref: "" };
   const returnedRef =
     (r.data as { ref?: string }).ref || (r.data as { id?: string }).id || ref;
   return { ok: true as const, ref: String(returnedRef) };
@@ -188,7 +188,7 @@ export async function kernelStatus(creds: KaggleCreds, ref: string) {
     userName,
     kernelSlug,
   });
-  if (!r.ok) return { ok: false as const, status: r.status, error: errOf(r.data) };
+  if (!r.ok) return { ok: false as const, status: r.status, error: errOf(r.data, r.status) };
   return { ok: true as const, ...(r.data as object) } as {
     ok: true;
     status?: string;
@@ -202,14 +202,14 @@ export async function kernelOutput(creds: KaggleCreds, ref: string) {
     userName,
     kernelSlug,
   });
-  if (!r.ok) return { ok: false as const, status: r.status, error: errOf(r.data) };
+  if (!r.ok) return { ok: false as const, status: r.status, error: errOf(r.data, r.status) };
   const log = String((r.data as KernelOutput).log || "");
   return { ok: true as const, log: trimLog(log), result: extractResult(log) };
 }
 
 export async function acceleratorQuota(creds: KaggleCreds) {
   const r = await call<Record<string, unknown>>(creds, "GetAcceleratorQuotaStatistics", {});
-  if (!r.ok) return { ok: false as const, status: r.status, error: errOf(r.data) };
+  if (!r.ok) return { ok: false as const, status: r.status, error: errOf(r.data, r.status) };
   return { ok: true as const, quota: r.data };
 }
 
@@ -221,13 +221,27 @@ function splitRef(ref: string): { userName: string; kernelSlug: string } {
   };
 }
 
-function errOf(data: unknown): string {
+function errOf(data: unknown, status?: number): string {
+  // Surface the real upstream cause: HTTP status + a compact body snippet.
+  // (Kaggle error bodies never contain our API key, so this is safe to expose.)
+  let detail = "";
   if (data && typeof data === "object") {
     const d = data as Record<string, unknown>;
-    if (typeof d.error === "string") return d.error.slice(0, 500);
-    if (typeof d.message === "string") return d.message.slice(0, 500);
+    if (typeof d.error === "string") detail = d.error.slice(0, 300);
+    else if (typeof d.message === "string") detail = d.message.slice(0, 300);
+    else {
+      try {
+        detail = JSON.stringify(d).slice(0, 300);
+      } catch {
+        detail = "";
+      }
+      if (detail === "{}" || detail === "null" || detail === "[]") detail = "";
+    }
+  } else if (typeof data === "string" && data) {
+    detail = data.slice(0, 300);
   }
-  return "kaggle request failed";
+  const prefix = status ? `kaggle HTTP ${status}` : "kaggle request failed";
+  return detail ? `${prefix}: ${detail}` : prefix;
 }
 
 const MAX_LOG = 120_000;
