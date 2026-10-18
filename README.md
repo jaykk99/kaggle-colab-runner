@@ -62,12 +62,6 @@ env vars.
 
 Phone verification on Kaggle is required before GPU quota is granted.
 
-## Live URLs
+## Live URL
 
-- Uncensored Harness: https://uncensored-harness-production.up.railway.app
-- Error Inbox: https://error-inbox.onrender.com
-- Bro Agent: https://bro-agent.onrender.com
-- ReconAnything: https://recon-anything.onrender.com
-- Kaggle Runner: https://kaggle-colab-runner.jayomer1234.workers.dev
-- Linux Remote App: https://linux-remote-app.onrender.com
-- Linux Remote Repo: https://github.com/jaykk99/linux-remote
+https://kaggle-colab-runner.jayomer1234.workers.dev
