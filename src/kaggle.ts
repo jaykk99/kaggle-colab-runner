@@ -55,11 +55,65 @@ function authHeader(c: KaggleCreds): string {
   return "Basic " + b64encode(`${c.username}:${c.apiKey}`);
 }
 
+/**
+ * Retry policy for Kaggle API calls.
+ * Retries 429 (rate limited) and 5xx with exponential backoff + jitter.
+ * 4xx (bad request / auth) fails immediately — retrying won't help.
+ */
+export const RETRYABLE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+const MAX_ATTEMPTS = 4;
+const BASE_DELAY_MS = 800;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function backoffDelay(attempt: number): number {
+  // attempt is 1-based for the retry that is about to happen
+  const exp = BASE_DELAY_MS * 2 ** (attempt - 1);
+  const jitter = Math.random() * 400;
+  return Math.min(exp + jitter, 15_000);
+}
+
+/** Parse a Retry-After header (seconds or HTTP date) into ms. */
+export function retryAfterMs(res: Response): number | null {
+  const v = res.headers.get("retry-after");
+  if (!v) return null;
+  const secs = Number(v);
+  if (Number.isFinite(secs) && secs >= 0) return Math.min(secs * 1000, 60_000);
+  const date = Date.parse(v);
+  if (!Number.isNaN(date)) return Math.max(0, Math.min(date - Date.now(), 60_000));
+  return null;
+}
+
 async function call<T>(
   creds: KaggleCreds,
   method: string,
   payload: Record<string, unknown>,
 ): Promise<{ ok: boolean; status: number; data: T | { error: string } }> {
+  let lastErr = "";
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const outcome = await callOnce<T>(creds, method, payload);
+    if (outcome.ok) return { ok: outcome.ok, status: outcome.status, data: outcome.data };
+    lastErr = (outcome.data as { error?: string }).error || "";
+    const retryable =
+      outcome.status === 502 && /could not reach kaggle/i.test(lastErr)
+        ? true // network-level failure: always retryable
+        : RETRYABLE_STATUS.has(outcome.status);
+    if (!retryable || attempt === MAX_ATTEMPTS)
+      return { ok: outcome.ok, status: outcome.status, data: outcome.data };
+    // Honor the server's Retry-After when present, else exponential backoff.
+    await sleep(outcome.retryAfterMs ?? backoffDelay(attempt));
+  }
+  // Unreachable, but keeps TS happy.
+  return { ok: false, status: 502, data: { error: lastErr } };
+}
+
+async function callOnce<T>(
+  creds: KaggleCreds,
+  method: string,
+  payload: Record<string, unknown>,
+): Promise<{ ok: boolean; status: number; data: T | { error: string }; retryAfterMs: number | null }> {
   let res: Response;
   try {
     res = await fetch(BASE + method, {
@@ -77,6 +131,7 @@ async function call<T>(
       ok: false,
       status: 502,
       data: { error: "could not reach Kaggle: " + (e as Error).message },
+      retryAfterMs: null,
     };
   }
   const text = await res.text();
@@ -86,7 +141,7 @@ async function call<T>(
   } catch {
     data = { error: text.slice(0, 600) || `HTTP ${res.status}` };
   }
-  return { ok: res.ok, status: res.status, data: data as T };
+  return { ok: res.ok, status: res.status, data: data as T, retryAfterMs: retryAfterMs(res) };
 }
 
 export interface KernelSessionStatus {

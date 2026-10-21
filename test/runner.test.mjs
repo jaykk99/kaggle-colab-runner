@@ -146,9 +146,9 @@ describe("MCP", () => {
     const j = await rpc("initialize", {});
     assert.equal(j.result.serverInfo.name, "kaggle-colab-runner");
   });
-  it("tools/list has 6 tools", async () => {
+  it("tools/list has 8 tools", async () => {
     const j = await rpc("tools/list", {});
-    assert.equal(j.result.tools.length, 6);
+    assert.equal(j.result.tools.length, 8);
   });
   it("tools/call runner_worker_notebook", async () => {
     const j = await rpc("tools/call", { name: "runner_worker_notebook", arguments: { type: "train" } });

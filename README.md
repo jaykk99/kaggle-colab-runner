@@ -30,10 +30,23 @@ the tab open. Same pattern as train-studio's `ts-worker.ipynb`.
 - `GET /api/output?job_id=` — Kaggle kernel log + parsed result
 - `GET /api/quota` — Kaggle GPU quota
 - `POST /api/cancel` — 501 (Kaggle's public API has no cancel; stop it on kaggle.com)
+- `GET /api/jobs?backend=&state=&q=&limit=&offset=` — job ledger, newest first
+- `GET /api/job?job_id=` — one ledger record
+- `GET /api/languages` — CPU languages + aliases
 - `GET /api/worker-notebook?type=train|asset` — Colab pull-worker .ipynb JSON
 - `POST /mcp` — MCP streamable HTTP (tools: `runner_run_code`,
   `runner_job_status`, `runner_job_output`, `runner_kaggle_quota`,
-  `runner_worker_notebook`)
+  `runner_job_history`, `runner_job_detail`,
+  `runner_worker_notebook`, `runner_worker_script`)
+
+## Limits & safety
+
+- Titles ≤ 120 chars, code ≤ 512 KB per job, job_id validated (no path junk).
+- `POST /api/run` is rate-limited: 30 submissions/minute per IP (429 after).
+- Kaggle API calls retry 429/5xx with exponential backoff + `Retry-After`
+  (max 4 attempts); 4xx fails immediately.
+- The job ledger is in-memory (resets on cold start/restart), capped at 500
+  entries, 7-day TTL — an operational convenience, not an audit log.
 
 Optional `RUNNER_API_KEY` env gates `/api/*` and `/mcp` via `x-api-key`.
 

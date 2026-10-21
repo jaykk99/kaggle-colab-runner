@@ -18,6 +18,19 @@ import {
 } from "./kaggle.js";
 import { runCpu } from "./wandbox.js";
 import { workerNotebook, workerScript, type WorkerType } from "./notebook.js";
+import {
+  validateBackend,
+  validateCode,
+  validateGpu,
+  validateJobId,
+  validateLanguage,
+  validateLimit,
+  validateOffset,
+  validateTitle,
+  validateWorkerType,
+  ValidationError,
+} from "./validate.js";
+import { getJob, listJobs, recordJob, type JobBackend, type JobState } from "./store.js";
 
 export interface RunnerEnv {
   KAGGLE_KEY?: string;
@@ -104,6 +117,38 @@ const TOOLS: ToolDef[] = [
       required: ["type"],
     },
   },
+  {
+    name: "runner_job_history",
+    description:
+      "List recent jobs submitted to this runner (kaggle + cpu), newest " +
+      "first. Filter by backend/state, search by title or job_id, paginate " +
+      "with limit/offset.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        backend: { type: "string", enum: ["kaggle", "cpu"] },
+        state: {
+          type: "string",
+          enum: ["submitted", "running", "complete", "error", "unknown"],
+        },
+        q: { type: "string", description: "search title or job_id" },
+        limit: { type: "integer", default: 25, maximum: 100 },
+        offset: { type: "integer", default: 0 },
+      },
+    },
+  },
+  {
+    name: "runner_job_detail",
+    description:
+      "Get the ledger record for one job_id (title, backend, state, " +
+      "timestamps, last error). For live Kaggle status/logs use " +
+      "runner_job_status / runner_job_output.",
+    inputSchema: {
+      type: "object",
+      properties: { job_id: { type: "string" } },
+      required: ["job_id"],
+    },
+  },
 ];
 
 function kaggleCreds(env: RunnerEnv): KaggleCreds | null {
@@ -118,6 +163,10 @@ function toolError(msg: string) {
   return { content: [{ type: "text", text: msg }], isError: true };
 }
 
+function argError(e: unknown): string {
+  return e instanceof ValidationError ? e.message : String((e as Error)?.message || e);
+}
+
 async function callTool(
   env: RunnerEnv,
   name: string,
@@ -125,9 +174,16 @@ async function callTool(
 ): Promise<unknown> {
   switch (name) {
     case "runner_run_code": {
-      const backend = String(args.backend || "cpu");
-      const code = String(args.code || "");
-      if (!code.trim()) return toolError("code is required");
+      let backend: "kaggle" | "cpu";
+      let code: string;
+      let title: string;
+      try {
+        backend = validateBackend(args.backend);
+        code = validateCode(args.code);
+        title = validateTitle(args.title);
+      } catch (e) {
+        return toolError(argError(e));
+      }
       if (backend === "kaggle") {
         const creds = kaggleCreds(env);
         if (!creds)
@@ -135,12 +191,18 @@ async function callTool(
             "Kaggle is not configured on the runner (no KAGGLE_KEY). " +
               "Use backend 'cpu' for CPU, or set the server's KAGGLE_KEY.",
           );
-        const r = await saveKernel(creds, {
-          title: String(args.title || "runner job"),
-          code,
-          gpu: args.gpu !== false,
-        });
-        if (!r.ok) return toolError(`kaggle submit failed (HTTP ${r.status}): ${r.error}`);
+        let gpu: boolean;
+        try {
+          gpu = validateGpu(args.gpu);
+        } catch (e) {
+          return toolError(argError(e));
+        }
+        const r = await saveKernel(creds, { title, code, gpu });
+        if (!r.ok) {
+          recordJob({ job_id: `kaggle-failed-${Date.now().toString(36)}`, backend, title, gpu, state: "error", error: r.error });
+          return toolError(`kaggle submit failed (HTTP ${r.status}): ${r.error}`);
+        }
+        recordJob({ job_id: r.ref, backend, title, gpu, source: "mcp" });
         return textResult({
           ok: true,
           job_id: r.ref,
@@ -149,22 +211,88 @@ async function callTool(
         });
       }
       // cpu: synchronous CPU run via Wandbox
-      const r = await runCpu(code, String(args.language || "python"));
-      return textResult((({ ok, ...rest }) => ({ ok, backend: "cpu", ...rest }))(r));
+      let language: "python" | "javascript";
+      try {
+        language = validateLanguage(args.language);
+      } catch (e) {
+        return toolError(argError(e));
+      }
+      const r = await runCpu(code, language);
+      const jobId = `cpu-${Date.now().toString(36)}`;
+      recordJob({
+        job_id: jobId,
+        backend,
+        title,
+        language,
+        source: "mcp",
+        state: r.ok ? "complete" : "error",
+        detail: `exit ${r.exitCode}`,
+        error: r.error,
+      });
+      return textResult((({ ok, ...rest }) => ({ ok, backend: "cpu", job_id: jobId, ...rest }))(r));
     }
     case "runner_job_status": {
+      let jobId: string;
+      try {
+        jobId = validateJobId(args.job_id);
+      } catch (e) {
+        return toolError(argError(e));
+      }
       const creds = kaggleCreds(env);
       if (!creds) return toolError("Kaggle is not configured on the runner (no KAGGLE_KEY).");
-      const r = await kernelStatus(creds, String(args.job_id || ""));
+      const r = await kernelStatus(creds, jobId);
       if (!r.ok) return toolError(`status failed (HTTP ${r.status}): ${r.error}`);
-      return textResult({ ok: true, job_id: args.job_id, status: r.status, detail: r });
+      return textResult({ ok: true, job_id: jobId, status: r.status, detail: r });
     }
     case "runner_job_output": {
+      let jobId: string;
+      try {
+        jobId = validateJobId(args.job_id);
+      } catch (e) {
+        return toolError(argError(e));
+      }
       const creds = kaggleCreds(env);
       if (!creds) return toolError("Kaggle is not configured on the runner (no KAGGLE_KEY).");
-      const r = await kernelOutput(creds, String(args.job_id || ""));
+      const r = await kernelOutput(creds, jobId);
       if (!r.ok) return toolError(`output failed (HTTP ${r.status}): ${r.error}`);
-      return textResult({ ok: true, job_id: args.job_id, log: r.log, result: r.result });
+      return textResult({ ok: true, job_id: jobId, log: r.log, result: r.result });
+    }
+    case "runner_job_history": {
+      let limit: number;
+      let offset: number;
+      try {
+        limit = validateLimit(args.limit);
+        offset = validateOffset(args.offset);
+      } catch (e) {
+        return toolError(argError(e));
+      }
+      const backend = args.backend ? String(args.backend) : undefined;
+      const state = args.state ? String(args.state) : undefined;
+      const validBackends = ["kaggle", "cpu"];
+      const validStates = ["submitted", "running", "complete", "error", "unknown"];
+      if (backend && !validBackends.includes(backend))
+        return toolError(`backend must be one of: ${validBackends.join(", ")}`);
+      if (state && !validStates.includes(state))
+        return toolError(`state must be one of: ${validStates.join(", ")}`);
+      const { total, jobs } = listJobs({
+        backend: backend as JobBackend | undefined,
+        state: state as JobState | undefined,
+        q: args.q ? String(args.q) : undefined,
+        limit,
+        offset,
+      });
+      return textResult({ ok: true, total, limit, offset, jobs });
+    }
+    case "runner_job_detail": {
+      let jobId: string;
+      try {
+        jobId = validateJobId(args.job_id);
+      } catch (e) {
+        return toolError(argError(e));
+      }
+      const rec = getJob(jobId);
+      if (!rec) return toolError(`unknown job_id '${jobId}'`);
+      return textResult({ ok: true, job: rec });
     }
     case "runner_kaggle_quota": {
       const creds = kaggleCreds(env);
@@ -174,23 +302,29 @@ async function callTool(
       return textResult({ ok: true, quota: r.quota });
     }
     case "runner_worker_script": {
-      const t = String(args.type || "");
-      if (t !== "train" && t !== "asset")
-        return toolError("type must be 'train' or 'asset'");
+      let t: WorkerType;
+      try {
+        t = validateWorkerType(args.type);
+      } catch (e) {
+        return toolError(argError(e));
+      }
       return textResult({
         ok: true,
         type: t,
-        script: workerScript(t as WorkerType, {
+        script: workerScript(t, {
           supabaseUrl: String(args.supabase_url || "") || undefined,
           supabaseKey: String(args.supabase_key || "") || undefined,
         }),
       });
     }
     case "runner_worker_notebook": {
-      const t = String(args.type || "");
-      if (t !== "train" && t !== "asset")
-        return toolError("type must be 'train' or 'asset'");
-      const nb = workerNotebook(t as WorkerType, {
+      let t: WorkerType;
+      try {
+        t = validateWorkerType(args.type);
+      } catch (e) {
+        return toolError(argError(e));
+      }
+      const nb = workerNotebook(t, {
         supabaseUrl: String(args.supabase_url || "") || undefined,
         supabaseKey: String(args.supabase_key || "") || undefined,
       });
