@@ -77,4 +77,4 @@ Phone verification on Kaggle is required before GPU quota is granted.
 
 ## Live URL
 
-https://kaggle-colab-runner.jayomer1234.workers.dev
+Currently unavailable (worker returns 404).
