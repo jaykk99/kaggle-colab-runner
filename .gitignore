@@ -1,0 +1,10 @@
+# Dependency installs should remain local; node_modules is already tracked
+# in this repository, so ignoring it prevents NEW paths only. Removing
+# historical tracked copies requires a separate reviewed migration.
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
